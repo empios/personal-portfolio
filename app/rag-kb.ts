@@ -262,26 +262,35 @@ export function synthesizeAnswer(
   if (chunks.length === 0) {
     return "Not enough information in the knowledge base to answer that.";
   }
-  const sentences = chunks
+  // Only draw from the two highest-ranked chunks to avoid off-topic sentences
+  const topChunks = chunks.slice(0, 2);
+  const sentences = topChunks
     .flatMap((c) => c.text.split(/(?<=[.!?])\s+/))
     .filter(Boolean);
   const q = query
     .toLowerCase()
     .split(/\s+/)
     .filter((w) => w.length > 2);
-  const scored = sentences
-    .map((s) => {
-      const lower = s.toLowerCase();
-      const hits = q.filter((w) => {
-        if (lower.includes(w)) return true;
-        if (w.endsWith("s") && w.length > 3 && lower.includes(w.slice(0, -1)))
-          return true;
-        return false;
-      }).length;
-      return { s, hits };
-    })
-    .sort((a, b) => b.hits - a.hits)
-    .slice(0, 3)
-    .map((x) => x.s);
-  return scored.join(" ");
+  const scored = sentences.map((s) => {
+    const lower = s.toLowerCase();
+    const hits = q.filter((w) => {
+      if (lower.includes(w)) return true;
+      if (w.endsWith("s") && w.length > 3 && lower.includes(w.slice(0, -1)))
+        return true;
+      return false;
+    }).length;
+    return { s, hits };
+  });
+  const relevant = scored.filter((x) => x.hits > 0);
+  if (relevant.length > 0) {
+    return relevant
+      .sort((a, b) => b.hits - a.hits)
+      .slice(0, 3)
+      .map((x) => x.s)
+      .join(" ");
+  }
+  // No query words found in sentence text — return the top chunk texts directly
+  return topChunks
+    .flatMap((c) => c.text.split(/(?<=[.!?])\s+/).slice(0, 2))
+    .join(" ");
 }
