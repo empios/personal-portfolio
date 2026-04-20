@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { retrieve, synthesizeAnswer } from "./rag-kb";
 
 const EMAIL = "pawelwlodarczyk97@yahoo.com";
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 const CHIPS = [
   { q: "what are your degrees and education background?", label: "education?" },
@@ -454,7 +455,7 @@ export default function Portfolio() {
             style={{ transitionDelay: "0.15s" }}
           >
             <a
-              href="https://github.com/"
+              href="https://github.com/empios"
               target="_blank"
               rel="noopener"
               data-original="github"
@@ -463,7 +464,7 @@ export default function Portfolio() {
               github<span className="arrow">↗</span>
             </a>
             <a
-              href="https://linkedin.com/"
+              href="https://www.linkedin.com/in/pawelvlodarczyk"
               target="_blank"
               rel="noopener"
               data-original="linkedin"
@@ -479,7 +480,7 @@ export default function Portfolio() {
               email<span className="arrow">↗</span>
             </a>
             <a
-              href="#"
+              href={`${BASE_PATH}/cv.pdf`}
               target="_blank"
               rel="noopener"
               data-original="cv"
