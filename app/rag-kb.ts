@@ -12,12 +12,16 @@ export const KB: KBDoc[] = [
       "tme",
       "current",
       "job",
+      "role",
+      "position",
       "backend",
+      "stack",
       "typescript",
       "python",
       "api",
       "postgresql",
       "search",
+      "work",
     ],
   },
   {
@@ -31,6 +35,11 @@ export const KB: KBDoc[] = [
       "tailwind",
       "openai",
       "mongodb",
+      "work",
+      "history",
+      "career",
+      "experience",
+      "job",
       "2023",
       "2024",
     ],
@@ -45,6 +54,11 @@ export const KB: KBDoc[] = [
       "typescript",
       "tailwind",
       "rest",
+      "work",
+      "history",
+      "career",
+      "experience",
+      "job",
       "2021",
       "2022",
     ],
@@ -59,6 +73,11 @@ export const KB: KBDoc[] = [
       "laravel",
       "react",
       "nextjs",
+      "work",
+      "history",
+      "career",
+      "experience",
+      "job",
       "2021",
     ],
   },
@@ -72,6 +91,10 @@ export const KB: KBDoc[] = [
       "javascript",
       "php",
       "sql",
+      "work",
+      "history",
+      "career",
+      "experience",
       "2020",
     ],
   },
@@ -81,13 +104,19 @@ export const KB: KBDoc[] = [
     tags: [
       "msc",
       "master",
+      "masters",
       "university",
       "gdansk",
       "wsb",
       "education",
       "degree",
+      "degrees",
       "studied",
       "school",
+      "academic",
+      "background",
+      "qualification",
+      "graduate",
       "2021",
       "2023",
       "computer science",
@@ -99,13 +128,19 @@ export const KB: KBDoc[] = [
     text: "Paweł studied at the Polish Naval Academy in Gdynia where he earned a Bachelor of Engineering in Computer Science, enrolled from September 2017 to March 2021. He took specialisation courses in web programming and DevOps solutions, and electives in web applications.",
     tags: [
       "bachelor",
+      "bachelors",
       "beng",
       "naval academy",
       "gdynia",
       "education",
       "degree",
+      "degrees",
       "studied",
       "school",
+      "academic",
+      "background",
+      "qualification",
+      "graduate",
       "2017",
       "2021",
       "devops",
@@ -129,6 +164,11 @@ export const KB: KBDoc[] = [
       "phoenix",
       "vector",
       "embeddings",
+      "projects",
+      "shipped",
+      "built",
+      "platform",
+      "assistant",
     ],
   },
   {
@@ -143,6 +183,8 @@ export const KB: KBDoc[] = [
       "design",
       "figma",
       "photoshop",
+      "skills",
+      "stack",
     ],
   },
   {
@@ -162,6 +204,11 @@ export const KB: KBDoc[] = [
       "vue",
       "django",
       "laravel",
+      "skills",
+      "stack",
+      "languages",
+      "frameworks",
+      "tools",
     ],
   },
   {
@@ -172,9 +219,12 @@ export const KB: KBDoc[] = [
       "remote",
       "contract",
       "available",
+      "availability",
       "location",
       "hire",
+      "hiring",
       "contact",
+      "work",
       "6 years",
     ],
   },
@@ -188,9 +238,15 @@ export function scoreDoc(query: string, doc: KBDoc): number {
     .split(/\s+/)
     .filter((w) => w.length > 2);
   const haystack = (doc.text + " " + doc.tags.join(" ")).toLowerCase();
-  const hits = words.filter((w) => haystack.includes(w)).length;
+  const hits = words.filter((w) => {
+    if (haystack.includes(w)) return true;
+    // match plural/singular variants (e.g. "degrees" → "degree")
+    if (w.endsWith("s") && w.length > 3 && haystack.includes(w.slice(0, -1)))
+      return true;
+    return false;
+  }).length;
   const base = words.length > 0 ? hits / words.length : 0;
-  return Math.min(0.99, base * 0.74 + Math.random() * 0.16 + 0.05);
+  return Math.min(0.99, base * 0.74 + Math.random() * 0.08 + 0.05);
 }
 
 export function retrieve(query: string, k: number): RetrievedChunk[] {
@@ -216,15 +272,16 @@ export function synthesizeAnswer(
   const scored = sentences
     .map((s) => {
       const lower = s.toLowerCase();
-      const hits = q.filter((w) => lower.includes(w)).length;
+      const hits = q.filter((w) => {
+        if (lower.includes(w)) return true;
+        if (w.endsWith("s") && w.length > 3 && lower.includes(w.slice(0, -1)))
+          return true;
+        return false;
+      }).length;
       return { s, hits };
     })
-    .filter((x) => x.hits > 0)
     .sort((a, b) => b.hits - a.hits)
     .slice(0, 3)
     .map((x) => x.s);
-  if (scored.length === 0) {
-    return chunks[0].text.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ");
-  }
   return scored.join(" ");
 }
