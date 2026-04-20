@@ -232,20 +232,34 @@ export const KB: KBDoc[] = [
 
 export type RetrievedChunk = KBDoc & { sim: number };
 
-export function scoreDoc(query: string, doc: KBDoc): number {
-  const words = query
+const STOPWORDS = new Set([
+  "and", "the", "for", "are", "you", "what", "your", "with",
+  "that", "from", "have", "been", "has", "his", "its", "this",
+  "not", "but", "can", "did", "how", "was", "were", "tell",
+  "about", "also", "just", "some", "more", "any", "all",
+]);
+
+function queryKeywords(query: string): string[] {
+  return query
     .toLowerCase()
     .split(/\s+/)
-    .filter((w) => w.length > 2);
+    .filter((w) => w.length > 2 && !STOPWORDS.has(w));
+}
+
+function matchWord(word: string, haystack: string): boolean {
+  if (haystack.includes(word)) return true;
+  // plural → singular (e.g. "degrees" → "degree")
+  if (word.endsWith("s") && word.length > 3 && haystack.includes(word.slice(0, -1)))
+    return true;
+  return false;
+}
+
+export function scoreDoc(query: string, doc: KBDoc): number {
+  const words = queryKeywords(query);
+  if (words.length === 0) return 0.05 + Math.random() * 0.08;
   const haystack = (doc.text + " " + doc.tags.join(" ")).toLowerCase();
-  const hits = words.filter((w) => {
-    if (haystack.includes(w)) return true;
-    // match plural/singular variants (e.g. "degrees" → "degree")
-    if (w.endsWith("s") && w.length > 3 && haystack.includes(w.slice(0, -1)))
-      return true;
-    return false;
-  }).length;
-  const base = words.length > 0 ? hits / words.length : 0;
+  const hits = words.filter((w) => matchWord(w, haystack)).length;
+  const base = hits / words.length;
   return Math.min(0.99, base * 0.74 + Math.random() * 0.08 + 0.05);
 }
 
@@ -262,35 +276,27 @@ export function synthesizeAnswer(
   if (chunks.length === 0) {
     return "Not enough information in the knowledge base to answer that.";
   }
-  // Only draw from the two highest-ranked chunks to avoid off-topic sentences
-  const topChunks = chunks.slice(0, 2);
-  const sentences = topChunks
-    .flatMap((c) => c.text.split(/(?<=[.!?])\s+/))
-    .filter(Boolean);
-  const q = query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-  const scored = sentences.map((s) => {
-    const lower = s.toLowerCase();
-    const hits = q.filter((w) => {
-      if (lower.includes(w)) return true;
-      if (w.endsWith("s") && w.length > 3 && lower.includes(w.slice(0, -1)))
-        return true;
-      return false;
-    }).length;
-    return { s, hits };
-  });
-  const relevant = scored.filter((x) => x.hits > 0);
-  if (relevant.length > 0) {
-    return relevant
-      .sort((a, b) => b.hits - a.hits)
-      .slice(0, 3)
-      .map((x) => x.s)
-      .join(" ");
-  }
-  // No query words found in sentence text — return the top chunk texts directly
-  return topChunks
-    .flatMap((c) => c.text.split(/(?<=[.!?])\s+/).slice(0, 2))
-    .join(" ");
+  // Include all chunks within 70% of the top score so tied docs (e.g. all
+  // work-history entries) are covered, while off-topic low scorers are excluded.
+  const threshold = chunks[0].sim * 0.70;
+  const topChunks = chunks.filter((c) => c.sim >= threshold).slice(0, 4);
+
+  // Scale sentences per chunk: more chunks → fewer sentences each, so the
+  // total stays concise (e.g. 4 jobs → 1 sentence each, 1 chunk → 3 sentences).
+  const perChunk = Math.max(1, Math.floor(3 / topChunks.length));
+  const candidates = topChunks.flatMap((c) =>
+    c.text.split(/(?<=[.!?])\s+/).filter(Boolean).slice(0, perChunk)
+  );
+
+  // Re-rank candidates by how many meaningful query keywords they contain.
+  const q = queryKeywords(query);
+  const scored = candidates
+    .map((s) => {
+      const lower = s.toLowerCase();
+      const hits = q.filter((w) => matchWord(w, lower)).length;
+      return { s, hits };
+    })
+    .sort((a, b) => b.hits - a.hits);
+
+  return scored.slice(0, 3).map((x) => x.s).join(" ");
 }
