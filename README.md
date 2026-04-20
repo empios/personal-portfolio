@@ -55,3 +55,11 @@ After setup, every push to `main`/`master` triggers deployment.
 - **Blank page / missing assets**: Usually base path mismatch. This workflow auto-detects whether to use `/<repo-name>` or root (`""`).
 - **404 on project pages**: Confirm Pages source is set to **GitHub Actions** and deploy job succeeds.
 - **Build failures in CI**: Run `npm ci && npm run build` locally first to reproduce.
+
+## CV PDF setup
+
+To make the **cv** link work, add your resume file at:
+
+- `public/cv.pdf`
+
+It will be available at `/cv.pdf` (or `<basePath>/cv.pdf` on GitHub Pages project sites).
