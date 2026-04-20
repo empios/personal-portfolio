@@ -1,8 +1,8 @@
-name: Deploy to GitHub Pages
+name: Deploy Next.js site to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: ["main", "master"]
   workflow_dispatch:
 
 permissions:
@@ -11,37 +11,50 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
-      - name: Configure Pages
-        id: pages
-        uses: actions/configure-pages@v5
+      - name: Install dependencies
+        run: npm ci
 
-      - run: npm ci
+      - name: Compute base path
+        id: base-path
+        shell: bash
+        run: |
+          repo_name="${GITHUB_REPOSITORY#*/}"
 
-      - name: Build
+          # User/Org pages repo (e.g. user.github.io) must be served from root.
+          if [[ "$repo_name" =~ ^.+\.github\.io$ ]]; then
+            echo "value=" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=/$repo_name" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build static export
         env:
-          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.base-path.outputs.value }}
         run: npm run build
 
-      - name: Add .nojekyll
-        run: touch out/.nojekyll
-
-      - uses: actions/upload-pages-artifact@v3
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          path: out
+          path: ./out
 
   deploy:
     needs: build
@@ -50,5 +63,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
