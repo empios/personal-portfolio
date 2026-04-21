@@ -1,4 +1,4 @@
-name: Deploy Next.js site to GitHub Pages
+name: Deploy to GitHub Pages
 
 on:
   push:
@@ -46,15 +46,15 @@ jobs:
             echo "value=/$repo_name" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build static export
+      - name: Build
         env:
-          NEXT_PUBLIC_BASE_PATH: ${{ steps.base-path.outputs.value }}
+          BASE_PATH: ${{ steps.base-path.outputs.value }}
         run: npm run build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./out
+          path: ./dist
 
   deploy:
     needs: build

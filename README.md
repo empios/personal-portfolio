@@ -1,6 +1,6 @@
 # Personal Portfolio
 
-A static Next.js portfolio configured for deployment to GitHub Pages.
+A single-page React portfolio built with Vite and TypeScript, configured for deployment to GitHub Pages.
 
 ## Requirements
 
@@ -21,7 +21,7 @@ A static Next.js portfolio configured for deployment to GitHub Pages.
    npm run dev
    ```
 
-3. Open http://localhost:3000
+3. Open http://localhost:5173
 
 ## Production build (local check)
 
@@ -29,7 +29,13 @@ A static Next.js portfolio configured for deployment to GitHub Pages.
 npm run build
 ```
 
-The static site output is generated in `out/` (from Next.js `output: "export"`).
+The static site output is generated in `dist/`.
+
+To preview the production build locally:
+
+```bash
+npm run preview
+```
 
 ## Deploy to GitHub Pages
 
@@ -40,7 +46,7 @@ This repository includes a GitHub Actions workflow at `.github/workflows/deploy.
    - Project Pages repo (`<repo>`): `/<repo>`
    - User/Org Pages repo (`<user>.github.io`): empty base path
 3. Builds the static site (`npm run build`)
-4. Uploads `out/` and deploys it to GitHub Pages
+4. Uploads and deploys to GitHub Pages
 
 ### One-time GitHub setup
 
@@ -52,7 +58,7 @@ After setup, every push to `main`/`master` triggers deployment.
 
 ## Troubleshooting GitHub Pages
 
-- **Blank page / missing assets**: Usually base path mismatch. This workflow auto-detects whether to use `/<repo-name>` or root (`""`).
+- **Blank page / missing assets**: Usually base path mismatch. Check the `base` option in `vite.config.ts`.
 - **404 on project pages**: Confirm Pages source is set to **GitHub Actions** and deploy job succeeds.
 - **Build failures in CI**: Run `npm ci && npm run build` locally first to reproduce.
 
@@ -62,4 +68,4 @@ To make the **cv** link work, add your resume file at:
 
 - `public/cv.pdf`
 
-It will be available at `/cv.pdf` (or `<basePath>/cv.pdf` on GitHub Pages project sites).
+It will be available at `/cv.pdf` (or `<base>/cv.pdf` on GitHub Pages project sites).

@@ -1,10 +1,8 @@
-"use client";
-
 import { useEffect, useRef, useState } from "react";
-import { retrieve, synthesizeAnswer } from "./rag-kb";
 
 const EMAIL = "pawelwlodarczyk97@yahoo.com";
-const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
+const RAG_API = "http://localhost:3001";
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const CHIPS = [
   { q: "what are your degrees and education background?", label: "education?" },
@@ -67,15 +65,6 @@ const HERO_LINES: Line[] = [
   },
 ];
 
-type ClaudeGlobal = {
-  claude?: {
-    complete: (args: {
-      messages: { role: string; content: string }[];
-      system: string;
-    }) => Promise<string>;
-  };
-};
-
 export default function Portfolio() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [linksVisible, setLinksVisible] = useState(false);
@@ -83,11 +72,22 @@ export default function Portfolio() {
 
   // Refs for typewriter
   const codeBlockRef = useRef<HTMLDivElement>(null);
+  const termWindowRef = useRef<HTMLDivElement>(null);
+  const termBodyRef = useRef<HTMLDivElement>(null);
+  const termInputRef = useRef<HTMLInputElement>(null);
   // Refs for RAG
+  const ragDemoRef = useRef<HTMLDivElement>(null);
   const ragOutputRef = useRef<HTMLDivElement>(null);
   const ragInputRef = useRef<HTMLInputElement>(null);
   const ragBusyRef = useRef(false);
   const userTouchedRef = useRef(false);
+  // Interactive terminal state
+  const [termReady, setTermReady] = useState(false);
+  const [termHistory, setTermHistory] = useState<{ type: "cmd" | "out"; text: string }[]>([]);
+  // Drag state
+  const dragTermWindow = useRef({ startX: 0, startY: 0, offsetX: 0, offsetY: 0, natX: 0, natY: 0, w: 0, h: 0 });
+  const dragRagDemo = useRef({ startX: 0, startY: 0, offsetX: 0, offsetY: 0, natX: 0, natY: 0, w: 0, h: 0 });
+  const zCounter = useRef(2);
   const [ragStatus, setRagStatus] = useState<"ready" | "running" | "done">(
     "ready"
   );
@@ -161,6 +161,7 @@ export default function Portfolio() {
         const lastLine = lineEls[lineEls.length - 1];
         lastLine.appendChild(cursor);
         setLinksVisible(true);
+        setTermReady(true);
         return;
       }
 
@@ -230,6 +231,185 @@ export default function Portfolio() {
     return () => observer.disconnect();
   }, []);
 
+  // ── Drag via pointer capture ────────────────────────────────────
+  const bringToFront = (el: HTMLDivElement | null) => {
+    if (el) el.style.zIndex = String(++zCounter.current);
+  };
+
+  const snapBack = (
+    ds: typeof dragTermWindow.current,
+    elRef: React.RefObject<HTMLDivElement | null>,
+  ) => {
+    const el = elRef.current;
+    if (!el) return;
+    el.classList.add("snapping");
+    el.style.transform = "";
+    ds.offsetX = 0;
+    ds.offsetY = 0;
+    setTimeout(() => el.classList.remove("snapping"), 300);
+  };
+
+  const makeDragHandlers = (
+    ds: typeof dragTermWindow.current,
+    elRef: React.RefObject<HTMLDivElement | null>,
+  ) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      if ((e.target as HTMLElement).closest(".rag-status")) return;
+      e.preventDefault();
+      bringToFront(elRef.current);
+      const handle = e.currentTarget as HTMLElement;
+      handle.setPointerCapture(e.pointerId);
+      ds.startX = e.clientX;
+      ds.startY = e.clientY;
+      const el = elRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        ds.natX = rect.left - ds.offsetX;
+        ds.natY = rect.top - ds.offsetY;
+        ds.w = rect.width;
+        ds.h = rect.height;
+        el.classList.add("dragging");
+      }
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      const handle = e.currentTarget as HTMLElement;
+      if (!handle.hasPointerCapture(e.pointerId)) return;
+      const el = elRef.current;
+      if (!el) return;
+      const pad = 60;
+      let x = ds.offsetX + e.clientX - ds.startX;
+      let y = ds.offsetY + e.clientY - ds.startY;
+      x = Math.max(-(ds.natX + ds.w - pad), Math.min(x, window.innerWidth - ds.natX - pad));
+      y = Math.max(-(ds.natY + ds.h - pad), Math.min(y, window.innerHeight - ds.natY - pad));
+      el.style.transform = `translate(${x}px, ${y}px)`;
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      const handle = e.currentTarget as HTMLElement;
+      if (!handle.hasPointerCapture(e.pointerId)) return;
+      handle.releasePointerCapture(e.pointerId);
+      const el = elRef.current;
+      if (el) {
+        const m = el.style.transform.match(/translate\((.+?)px,\s*(.+?)px\)/);
+        if (m) {
+          ds.offsetX = parseFloat(m[1]);
+          ds.offsetY = parseFloat(m[2]);
+        }
+      }
+      el?.classList.remove("dragging");
+    },
+    onDoubleClick: () => snapBack(ds, elRef),
+  });
+
+  const termDrag = makeDragHandlers(dragTermWindow.current, termWindowRef);
+  const ragDrag = makeDragHandlers(dragRagDemo.current, ragDemoRef);
+
+  // ── Ctrl+K to focus RAG input ─────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        ragInputRef.current?.focus();
+        ragInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  // ── Interactive terminal commands ─────────────────────────────
+  const runTermCommand = (cmd: string): string[] => {
+    const c = cmd.trim().toLowerCase();
+    if (c === "help") return [
+      "available commands:",
+      "  whoami          about me",
+      "  ls              list files",
+      "  cat <file>      read a file",
+      "  skills          tech stack",
+      "  contact         contact info",
+      "  clear           clear terminal",
+    ];
+    if (c === "whoami") return [
+      "pawel wlodarczyk",
+      "full-stack engineer, 6 years",
+      "backend developer @ TME (oct 2024-present)",
+      "msc computer science, beng computer science",
+      "poland, utc+2",
+    ];
+    if (c === "ls" || c === "ls .") return [
+      "about.txt    skills.txt    projects/",
+      "contact.txt  education.txt",
+    ];
+    if (c === "ls projects" || c === "ls projects/") return [
+      "okwow-ai-platform/",
+      "baloise-enterprise-assistant/",
+      "tme-ai-features/",
+    ];
+    if (c === "cat about.txt") return [
+      "full-stack engineer with 6 years of experience.",
+      "currently building ai features at TME using",
+      "langgraph, langchain, ollama, and python.",
+      "previously shipped react/next.js apps at",
+      "ecohedge, weupcode, and softwarebay.",
+    ];
+    if (c === "cat skills.txt" || c === "skills") return [
+      "languages:  typescript, javascript, python, php, java",
+      "frontend:   react, next.js, tailwindcss, redux, jotai",
+      "backend:    node.js, express, postgresql, mongodb",
+      "ai/ml:      langgraph, langchain, ollama, rag, openai",
+      "tools:      docker, kubernetes, git, figma, auth0",
+    ];
+    if (c === "cat education.txt") return [
+      "msc computer science",
+      "  wsb gdansk, 2021-2023",
+      "  specialisation: front-end development",
+      "",
+      "beng computer science",
+      "  polish naval academy, gdynia, 2017-2021",
+      "  specialisation: web programming & devops",
+    ];
+    if (c === "cat contact.txt" || c === "contact") return [
+      "email:    pawelwlodarczyk97@yahoo.com",
+      "github:   github.com/empios",
+      "linkedin: linkedin.com/in/pawelvlodarczyk",
+      "status:   open to contract & remote",
+    ];
+    if (c === "sudo hire pawel") return [
+      "[sudo] verifying credentials... ok",
+      "generating offer_letter.pdf... done",
+      "signing contract.pdf... done",
+      "scheduling onboarding... monday",
+      "",
+      "welcome aboard.",
+    ];
+    if (c.startsWith("cat ")) return [
+      `cat: ${c.slice(4)}: no such file or directory`,
+      "try: ls",
+    ];
+    if (c === "") return [];
+    return [`command not found: ${c}`, "type \"help\" for available commands"];
+  };
+
+  const onTermKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    const input = termInputRef.current;
+    if (!input) return;
+    const cmd = input.value.trim();
+    input.value = "";
+    if (cmd === "clear") {
+      setTermHistory([]);
+      return;
+    }
+    const output = runTermCommand(cmd);
+    setTermHistory((prev) => [
+      ...prev,
+      { type: "cmd", text: cmd },
+      ...output.map((text) => ({ type: "out" as const, text })),
+    ]);
+    setTimeout(() => {
+      if (termBodyRef.current) termBodyRef.current.scrollTop = termBodyRef.current.scrollHeight;
+    }, 0);
+  };
+
   // ── Scramble hover ─────────────────────────────────────────────
   const scramble = (el: HTMLAnchorElement) => {
     const original =
@@ -265,8 +445,6 @@ export default function Portfolio() {
   };
 
   // ── RAG helpers ────────────────────────────────────────────────
-  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
   const trunc = (text: string, len: number) =>
     text.length > len ? text.slice(0, len) + "…" : text;
 
@@ -289,15 +467,6 @@ export default function Portfolio() {
       }, delay);
     });
 
-  const streamInto = async (el: HTMLElement, text: string) => {
-    const ragOutput = ragOutputRef.current;
-    for (let i = 0; i < text.length; i++) {
-      el.textContent += text[i];
-      if (ragOutput) ragOutput.scrollTop = ragOutput.scrollHeight;
-      await wait(7);
-    }
-  };
-
   const runQuery = async (query: string) => {
     if (ragBusyRef.current || !query.trim()) return;
     ragBusyRef.current = true;
@@ -308,76 +477,136 @@ export default function Portfolio() {
     await appendLine("");
     await appendLine("> " + query, "query-out");
     await appendLine("");
-    await appendLine("vectorizing query...", "step", 200);
-    await appendLine("searching chroma  cosine  k=4", "step", 500);
-    await wait(900);
+    await appendLine("searching knowledge base...", "step", 200);
 
-    const chunks = retrieve(query, 4);
-    await appendLine("");
-    await appendLine("retrieved " + chunks.length + " chunks:", "step");
-    for (let i = 0; i < chunks.length; i++) {
-      await wait(i * 200);
-      await appendLine(trunc(chunks[i].text, 88), "chunk");
-      await appendLine("similarity: " + chunks[i].sim.toFixed(4), "score");
-    }
+    const finish = () => {
+      appendLine("");
+      setRagStatus("done");
+      ragBusyRef.current = false;
+      setRunDisabled(false);
+      setChipsDisabled(false);
+      ragInputRef.current?.focus();
+      setTimeout(() => setRagStatus("ready"), 3000);
+    };
 
-    await appendLine("");
-    await appendLine("generating response...", "step", 300);
-    await wait(600);
-
-    const ragOutput = ragOutputRef.current;
-    const cur = ragOutput?.querySelector(".rag-cursor-line");
-    if (cur) cur.remove();
-    const respEl = document.createElement("div");
-    respEl.className = "rag-line response";
-    ragOutput?.appendChild(respEl);
-    if (ragOutput) ragOutput.scrollTop = ragOutput.scrollHeight;
-
-    const context = chunks.map((c) => c.text).join("\n\n");
-    const sys =
-      "You are a RAG assistant embedded in Paweł Włodarczyk's personal portfolio. Answer questions about Paweł using ONLY the provided context. Speak in third person about Paweł. Be concise — 2–3 sentences max. Direct, technical, no fluff. If the context does not contain enough information, say so briefly.\n\nContext:\n" +
-      context;
-
+    let res: Response;
     try {
-      const claudeApi = (window as unknown as ClaudeGlobal).claude;
-      if (claudeApi?.complete) {
-        const result = await claudeApi.complete({
-          messages: [{ role: "user", content: query }],
-          system: sys,
-        });
-        await streamInto(respEl, result);
-      } else {
-        const synthesized = synthesizeAnswer(query, chunks);
-        await streamInto(respEl, synthesized);
-      }
+      res = await fetch(`${RAG_API}/api/rag`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
     } catch {
-      respEl.textContent = "// model unavailable";
-      respEl.classList.add("dim");
+      await appendLine("// backend unavailable — is the server running?", "dim");
+      finish();
+      return;
     }
 
-    await appendLine("");
-    setRagStatus("done");
-    ragBusyRef.current = false;
-    setRunDisabled(false);
-    setChipsDisabled(false);
-    ragInputRef.current?.focus();
-    setTimeout(() => {
-      setRagStatus("ready");
-    }, 3000);
+    if (res.status === 429) {
+      await appendLine("// rate limit reached — try again in a minute", "dim");
+      finish();
+      return;
+    }
+
+    if (!res.ok) {
+      await appendLine("// request failed (" + res.status + ")", "dim");
+      finish();
+      return;
+    }
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let respEl: HTMLDivElement | null = null;
+    let shouldStop = false;
+
+    while (!shouldStop) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop()!;
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+
+        if (payload === "[DONE]") {
+          shouldStop = true;
+          break;
+        }
+
+        try {
+          const data = JSON.parse(payload);
+
+          if (data.error) {
+            await appendLine("");
+            await appendLine("// error: " + data.error, "dim");
+            shouldStop = true;
+            break;
+          }
+
+          if (data.chunks) {
+            await appendLine("");
+            await appendLine(
+              "retrieved " + data.chunks.length + " chunks:",
+              "step"
+            );
+            for (const chunk of data.chunks) {
+              await appendLine(trunc(chunk.text, 88), "chunk");
+              await appendLine(
+                "similarity: " + chunk.score.toFixed(4),
+                "score"
+              );
+            }
+            await appendLine("");
+            await appendLine("generating response...", "step");
+
+            const ragOutput = ragOutputRef.current;
+            const cur = ragOutput?.querySelector(".rag-cursor-line");
+            if (cur) cur.remove();
+            respEl = document.createElement("div");
+            respEl.className = "rag-line response";
+            ragOutput?.appendChild(respEl);
+            if (ragOutput) ragOutput.scrollTop = ragOutput.scrollHeight;
+          }
+
+          if (data.token != null) {
+            if (!respEl) {
+              const ragOutput = ragOutputRef.current;
+              const cur = ragOutput?.querySelector(".rag-cursor-line");
+              if (cur) cur.remove();
+              respEl = document.createElement("div");
+              respEl.className = "rag-line response";
+              ragOutput?.appendChild(respEl);
+            }
+            respEl.textContent += data.token;
+            const ragOutput = ragOutputRef.current;
+            if (ragOutput) ragOutput.scrollTop = ragOutput.scrollHeight;
+          }
+        } catch {
+          // ignore malformed SSE data
+        }
+      }
+    }
+
+    finish();
   };
 
   // ── Auto-demo ──────────────────────────────────────────────────
   useEffect(() => {
-    const handle = setTimeout(() => {
-      if (!userTouchedRef.current) {
-        runQuery("what is your current role and stack?").then(() => {
-          appendLine("");
-          appendLine(
-            "// click a chip or type your own question below",
-            "dim"
-          );
-        });
+    const handle = setTimeout(async () => {
+      if (userTouchedRef.current) return;
+      try {
+        const h = await fetch(`${RAG_API}/health`);
+        if (!h.ok) return;
+      } catch {
+        return;
       }
+      await runQuery("what is your current role and stack?");
+      appendLine("");
+      appendLine("// click a chip or type your own question below", "dim");
     }, 2500);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -431,77 +660,129 @@ export default function Portfolio() {
       <div id="hero">
         <div id="hero-left">
           <div
-            className="code-block fade-in visible"
+            className="term-window fade-in visible"
             id="code-block"
-            ref={codeBlockRef}
+            ref={termWindowRef}
+            onMouseDown={() => bringToFront(termWindowRef.current)}
           >
-            {HERO_LINES.map((line, i) => (
-              <div className={line.className} key={i}>
-                {line.segments.map((seg, j) => (
-                  <span className={seg.className} key={j}>
-                    {seg.text}
-                  </span>
-                ))}
-                {i === HERO_LINES.length - 1 && (
-                  <span className="cursor"></span>
-                )}
+            <div className="term-titlebar" {...termDrag}>
+              <div className="term-dots">
+                <span className="term-dot red"></span>
+                <span className="term-dot yellow"></span>
+                <span className="term-dot green"></span>
               </div>
-            ))}
+              <span className="term-titlebar-text">~/about.sh</span>
+              <span className="term-titlebar-spacer"></span>
+            </div>
+            <div className="term-body" ref={termBodyRef}>
+              <div className="code-block" ref={codeBlockRef}>
+                {HERO_LINES.map((line, i) => (
+                  <div className={line.className} key={i}>
+                    {line.segments.map((seg, j) => (
+                      <span className={seg.className} key={j}>
+                        {seg.text}
+                      </span>
+                    ))}
+                    {i === HERO_LINES.length - 1 && (
+                      <span className="cursor"></span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {termReady && (
+                <>
+                  <div className="term-hint">type help to get started</div>
+                  {termHistory.map((entry, i) => (
+                    <div
+                      key={i}
+                      className={`term-line ${entry.type === "cmd" ? "term-cmd" : "term-out"}`}
+                    >
+                      {entry.type === "cmd" ? `$ ${entry.text}` : entry.text}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+            {termReady && (
+              <div className="term-input-row">
+                <span className="term-prompt">$</span>
+                <input
+                  ref={termInputRef}
+                  className="term-input"
+                  type="text"
+                  placeholder="try: whoami, ls, cat about.txt"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onKeyDown={onTermKeyDown}
+                />
+              </div>
+            )}
+            <nav
+              className={"link-row" + (linksVisible ? " visible" : "")}
+              id="links"
+            >
+              <a
+                href="https://github.com/empios"
+                target="_blank"
+                rel="noopener"
+                data-original="github"
+                onMouseEnter={(e) => scramble(e.currentTarget)}
+              >
+                github<span className="arrow">↗</span>
+              </a>
+              <a
+                href="https://www.linkedin.com/in/pawelvlodarczyk"
+                target="_blank"
+                rel="noopener"
+                data-original="linkedin"
+                onMouseEnter={(e) => scramble(e.currentTarget)}
+              >
+                linkedin<span className="arrow">↗</span>
+              </a>
+              <a
+                href={`mailto:${EMAIL}`}
+                data-original="email"
+                onMouseEnter={(e) => scramble(e.currentTarget)}
+              >
+                email<span className="arrow">↗</span>
+              </a>
+              <a
+                href={`${BASE_PATH}/cv.pdf`}
+                target="_blank"
+                rel="noopener"
+                data-original="cv"
+                onMouseEnter={(e) => scramble(e.currentTarget)}
+              >
+                cv<span className="arrow">↗</span>
+              </a>
+            </nav>
           </div>
-
-          <nav
-            className={"link-row fade-in" + (linksVisible ? " visible" : "")}
-            id="links"
-            style={{ transitionDelay: "0.15s" }}
-          >
-            <a
-              href="https://github.com/empios"
-              target="_blank"
-              rel="noopener"
-              data-original="github"
-              onMouseEnter={(e) => scramble(e.currentTarget)}
-            >
-              github<span className="arrow">↗</span>
-            </a>
-            <a
-              href="https://www.linkedin.com/in/pawelvlodarczyk"
-              target="_blank"
-              rel="noopener"
-              data-original="linkedin"
-              onMouseEnter={(e) => scramble(e.currentTarget)}
-            >
-              linkedin<span className="arrow">↗</span>
-            </a>
-            <a
-              href={`mailto:${EMAIL}`}
-              data-original="email"
-              onMouseEnter={(e) => scramble(e.currentTarget)}
-            >
-              email<span className="arrow">↗</span>
-            </a>
-            <a
-              href={`${BASE_PATH}/cv.pdf`}
-              target="_blank"
-              rel="noopener"
-              data-original="cv"
-              onMouseEnter={(e) => scramble(e.currentTarget)}
-            >
-              cv<span className="arrow">↗</span>
-            </a>
-          </nav>
         </div>
 
         <div id="hero-right" aria-hidden="false">
-          <div className="rag-demo" id="rag-demo">
-            <div className="rag-header">
-              <span className="rag-title">rag_demo.py</span>
+          <div
+            className="rag-demo"
+            id="rag-demo"
+            ref={ragDemoRef}
+            onMouseDown={() => bringToFront(ragDemoRef.current)}
+          >
+            <div
+              className="rag-header"
+              {...ragDrag}
+            >
+              <div className="term-dots">
+                <span className="term-dot red"></span>
+                <span className="term-dot yellow"></span>
+                <span className="term-dot green"></span>
+              </div>
+              <span className="rag-title">~/rag_demo.py</span>
               <span className="rag-status" id="rag-status">
                 <span className={`rag-dot ${ragStatus === "running" ? "running" : ragStatus === "done" ? "done" : ""}`}></span>
                 {ragStatus}
               </span>
             </div>
             <div className="rag-sub-header">
-              // simulated · keyword retrieval · claude generation
+              $ python rag_demo.py --mode interactive
             </div>
             <div
               className="rag-output"
@@ -548,6 +829,7 @@ export default function Portfolio() {
                 onFocus={onInputFocus}
                 onKeyDown={onInputKeyDown}
               />
+              <kbd className="rag-kbd">ctrl+k</kbd>
               <button
                 className="rag-run"
                 id="rag-run"
