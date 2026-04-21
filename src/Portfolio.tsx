@@ -1,10 +1,8 @@
-"use client";
-
 import { useEffect, useRef, useState } from "react";
 import { retrieve, synthesizeAnswer } from "./rag-kb";
 
 const EMAIL = "pawelwlodarczyk97@yahoo.com";
-const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const CHIPS = [
   { q: "what are your degrees and education background?", label: "education?" },
@@ -84,15 +82,21 @@ export default function Portfolio() {
   // Refs for typewriter
   const codeBlockRef = useRef<HTMLDivElement>(null);
   const termWindowRef = useRef<HTMLDivElement>(null);
+  const termBodyRef = useRef<HTMLDivElement>(null);
+  const termInputRef = useRef<HTMLInputElement>(null);
   // Refs for RAG
   const ragDemoRef = useRef<HTMLDivElement>(null);
   const ragOutputRef = useRef<HTMLDivElement>(null);
   const ragInputRef = useRef<HTMLInputElement>(null);
   const ragBusyRef = useRef(false);
   const userTouchedRef = useRef(false);
-  // Drag state — one per draggable terminal
+  // Interactive terminal state
+  const [termReady, setTermReady] = useState(false);
+  const [termHistory, setTermHistory] = useState<{ type: "cmd" | "out"; text: string }[]>([]);
+  // Drag state
   const dragTermWindow = useRef({ startX: 0, startY: 0, offsetX: 0, offsetY: 0, natX: 0, natY: 0, w: 0, h: 0 });
   const dragRagDemo = useRef({ startX: 0, startY: 0, offsetX: 0, offsetY: 0, natX: 0, natY: 0, w: 0, h: 0 });
+  const zCounter = useRef(2);
   const [ragStatus, setRagStatus] = useState<"ready" | "running" | "done">(
     "ready"
   );
@@ -166,6 +170,7 @@ export default function Portfolio() {
         const lastLine = lineEls[lineEls.length - 1];
         lastLine.appendChild(cursor);
         setLinksVisible(true);
+        setTermReady(true);
         return;
       }
 
@@ -236,6 +241,23 @@ export default function Portfolio() {
   }, []);
 
   // ── Drag via pointer capture ────────────────────────────────────
+  const bringToFront = (el: HTMLDivElement | null) => {
+    if (el) el.style.zIndex = String(++zCounter.current);
+  };
+
+  const snapBack = (
+    ds: typeof dragTermWindow.current,
+    elRef: React.RefObject<HTMLDivElement | null>,
+  ) => {
+    const el = elRef.current;
+    if (!el) return;
+    el.classList.add("snapping");
+    el.style.transform = "";
+    ds.offsetX = 0;
+    ds.offsetY = 0;
+    setTimeout(() => el.classList.remove("snapping"), 300);
+  };
+
   const makeDragHandlers = (
     ds: typeof dragTermWindow.current,
     elRef: React.RefObject<HTMLDivElement | null>,
@@ -243,6 +265,7 @@ export default function Portfolio() {
     onPointerDown: (e: React.PointerEvent) => {
       if ((e.target as HTMLElement).closest(".rag-status")) return;
       e.preventDefault();
+      bringToFront(elRef.current);
       const handle = e.currentTarget as HTMLElement;
       handle.setPointerCapture(e.pointerId);
       ds.startX = e.clientX;
@@ -283,10 +306,118 @@ export default function Portfolio() {
       }
       el?.classList.remove("dragging");
     },
+    onDoubleClick: () => snapBack(ds, elRef),
   });
 
   const termDrag = makeDragHandlers(dragTermWindow.current, termWindowRef);
   const ragDrag = makeDragHandlers(dragRagDemo.current, ragDemoRef);
+
+  // ── Ctrl+K to focus RAG input ─────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        ragInputRef.current?.focus();
+        ragInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  // ── Interactive terminal commands ─────────────────────────────
+  const runTermCommand = (cmd: string): string[] => {
+    const c = cmd.trim().toLowerCase();
+    if (c === "help") return [
+      "available commands:",
+      "  whoami          about me",
+      "  ls              list files",
+      "  cat <file>      read a file",
+      "  skills          tech stack",
+      "  contact         contact info",
+      "  clear           clear terminal",
+    ];
+    if (c === "whoami") return [
+      "pawel wlodarczyk",
+      "full-stack engineer, 6 years",
+      "backend developer @ TME (oct 2024-present)",
+      "msc computer science, beng computer science",
+      "poland, utc+2",
+    ];
+    if (c === "ls" || c === "ls .") return [
+      "about.txt    skills.txt    projects/",
+      "contact.txt  education.txt",
+    ];
+    if (c === "ls projects" || c === "ls projects/") return [
+      "okwow-ai-platform/",
+      "baloise-enterprise-assistant/",
+      "tme-ai-features/",
+    ];
+    if (c === "cat about.txt") return [
+      "full-stack engineer with 6 years of experience.",
+      "currently building ai features at TME using",
+      "langgraph, langchain, ollama, and python.",
+      "previously shipped react/next.js apps at",
+      "ecohedge, weupcode, and softwarebay.",
+    ];
+    if (c === "cat skills.txt" || c === "skills") return [
+      "languages:  typescript, javascript, python, php, java",
+      "frontend:   react, next.js, tailwindcss, redux, jotai",
+      "backend:    node.js, express, postgresql, mongodb",
+      "ai/ml:      langgraph, langchain, ollama, rag, openai",
+      "tools:      docker, kubernetes, git, figma, auth0",
+    ];
+    if (c === "cat education.txt") return [
+      "msc computer science",
+      "  wsb gdansk, 2021-2023",
+      "  specialisation: front-end development",
+      "",
+      "beng computer science",
+      "  polish naval academy, gdynia, 2017-2021",
+      "  specialisation: web programming & devops",
+    ];
+    if (c === "cat contact.txt" || c === "contact") return [
+      "email:    pawelwlodarczyk97@yahoo.com",
+      "github:   github.com/empios",
+      "linkedin: linkedin.com/in/pawelvlodarczyk",
+      "status:   open to contract & remote",
+    ];
+    if (c === "sudo hire pawel") return [
+      "[sudo] verifying credentials... ok",
+      "generating offer_letter.pdf... done",
+      "signing contract.pdf... done",
+      "scheduling onboarding... monday",
+      "",
+      "welcome aboard.",
+    ];
+    if (c.startsWith("cat ")) return [
+      `cat: ${c.slice(4)}: no such file or directory`,
+      "try: ls",
+    ];
+    if (c === "") return [];
+    return [`command not found: ${c}`, "type \"help\" for available commands"];
+  };
+
+  const onTermKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    const input = termInputRef.current;
+    if (!input) return;
+    const cmd = input.value.trim();
+    input.value = "";
+    if (cmd === "clear") {
+      setTermHistory([]);
+      return;
+    }
+    const output = runTermCommand(cmd);
+    setTermHistory((prev) => [
+      ...prev,
+      { type: "cmd", text: cmd },
+      ...output.map((text) => ({ type: "out" as const, text })),
+    ]);
+    setTimeout(() => {
+      if (termBodyRef.current) termBodyRef.current.scrollTop = termBodyRef.current.scrollHeight;
+    }, 0);
+  };
 
   // ── Scramble hover ─────────────────────────────────────────────
   const scramble = (el: HTMLAnchorElement) => {
@@ -488,11 +619,13 @@ export default function Portfolio() {
 
       <div id="hero">
         <div id="hero-left">
-          <div className="term-window fade-in visible" id="code-block" ref={termWindowRef}>
-            <div
-              className="term-titlebar"
-              {...termDrag}
-            >
+          <div
+            className="term-window fade-in visible"
+            id="code-block"
+            ref={termWindowRef}
+            onMouseDown={() => bringToFront(termWindowRef.current)}
+          >
+            <div className="term-titlebar" {...termDrag}>
               <div className="term-dots">
                 <span className="term-dot red"></span>
                 <span className="term-dot yellow"></span>
@@ -501,20 +634,49 @@ export default function Portfolio() {
               <span className="term-titlebar-text">~/about.sh</span>
               <span className="term-titlebar-spacer"></span>
             </div>
-            <div className="code-block" ref={codeBlockRef}>
-              {HERO_LINES.map((line, i) => (
-                <div className={line.className} key={i}>
-                  {line.segments.map((seg, j) => (
-                    <span className={seg.className} key={j}>
-                      {seg.text}
-                    </span>
+            <div className="term-body" ref={termBodyRef}>
+              <div className="code-block" ref={codeBlockRef}>
+                {HERO_LINES.map((line, i) => (
+                  <div className={line.className} key={i}>
+                    {line.segments.map((seg, j) => (
+                      <span className={seg.className} key={j}>
+                        {seg.text}
+                      </span>
+                    ))}
+                    {i === HERO_LINES.length - 1 && (
+                      <span className="cursor"></span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {termReady && (
+                <>
+                  <div className="term-hint">type help to get started</div>
+                  {termHistory.map((entry, i) => (
+                    <div
+                      key={i}
+                      className={`term-line ${entry.type === "cmd" ? "term-cmd" : "term-out"}`}
+                    >
+                      {entry.type === "cmd" ? `$ ${entry.text}` : entry.text}
+                    </div>
                   ))}
-                  {i === HERO_LINES.length - 1 && (
-                    <span className="cursor"></span>
-                  )}
-                </div>
-              ))}
+                </>
+              )}
             </div>
+            {termReady && (
+              <div className="term-input-row">
+                <span className="term-prompt">$</span>
+                <input
+                  ref={termInputRef}
+                  className="term-input"
+                  type="text"
+                  placeholder="try: whoami, ls, cat about.txt"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onKeyDown={onTermKeyDown}
+                />
+              </div>
+            )}
             <nav
               className={"link-row" + (linksVisible ? " visible" : "")}
               id="links"
@@ -558,7 +720,12 @@ export default function Portfolio() {
         </div>
 
         <div id="hero-right" aria-hidden="false">
-          <div className="rag-demo" id="rag-demo" ref={ragDemoRef}>
+          <div
+            className="rag-demo"
+            id="rag-demo"
+            ref={ragDemoRef}
+            onMouseDown={() => bringToFront(ragDemoRef.current)}
+          >
             <div
               className="rag-header"
               {...ragDrag}
@@ -622,6 +789,7 @@ export default function Portfolio() {
                 onFocus={onInputFocus}
                 onKeyDown={onInputKeyDown}
               />
+              <kbd className="rag-kbd">ctrl+k</kbd>
               <button
                 className="rag-run"
                 id="rag-run"
