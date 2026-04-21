@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { retrieve, synthesizeAnswer } from "./rag-kb";
 
 const EMAIL = "pawelwlodarczyk97@yahoo.com";
+const RAG_API = "http://localhost:3001";
 const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const CHIPS = [
@@ -64,15 +64,6 @@ const HERO_LINES: Line[] = [
     ],
   },
 ];
-
-type ClaudeGlobal = {
-  claude?: {
-    complete: (args: {
-      messages: { role: string; content: string }[];
-      system: string;
-    }) => Promise<string>;
-  };
-};
 
 export default function Portfolio() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -454,8 +445,6 @@ export default function Portfolio() {
   };
 
   // ── RAG helpers ────────────────────────────────────────────────
-  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
   const trunc = (text: string, len: number) =>
     text.length > len ? text.slice(0, len) + "…" : text;
 
@@ -478,15 +467,6 @@ export default function Portfolio() {
       }, delay);
     });
 
-  const streamInto = async (el: HTMLElement, text: string) => {
-    const ragOutput = ragOutputRef.current;
-    for (let i = 0; i < text.length; i++) {
-      el.textContent += text[i];
-      if (ragOutput) ragOutput.scrollTop = ragOutput.scrollHeight;
-      await wait(7);
-    }
-  };
-
   const runQuery = async (query: string) => {
     if (ragBusyRef.current || !query.trim()) return;
     ragBusyRef.current = true;
@@ -497,76 +477,136 @@ export default function Portfolio() {
     await appendLine("");
     await appendLine("> " + query, "query-out");
     await appendLine("");
-    await appendLine("vectorizing query...", "step", 200);
-    await appendLine("searching chroma  cosine  k=4", "step", 500);
-    await wait(900);
+    await appendLine("searching knowledge base...", "step", 200);
 
-    const chunks = retrieve(query, 4);
-    await appendLine("");
-    await appendLine("retrieved " + chunks.length + " chunks:", "step");
-    for (let i = 0; i < chunks.length; i++) {
-      await wait(i * 200);
-      await appendLine(trunc(chunks[i].text, 88), "chunk");
-      await appendLine("similarity: " + chunks[i].sim.toFixed(4), "score");
-    }
+    const finish = () => {
+      appendLine("");
+      setRagStatus("done");
+      ragBusyRef.current = false;
+      setRunDisabled(false);
+      setChipsDisabled(false);
+      ragInputRef.current?.focus();
+      setTimeout(() => setRagStatus("ready"), 3000);
+    };
 
-    await appendLine("");
-    await appendLine("generating response...", "step", 300);
-    await wait(600);
-
-    const ragOutput = ragOutputRef.current;
-    const cur = ragOutput?.querySelector(".rag-cursor-line");
-    if (cur) cur.remove();
-    const respEl = document.createElement("div");
-    respEl.className = "rag-line response";
-    ragOutput?.appendChild(respEl);
-    if (ragOutput) ragOutput.scrollTop = ragOutput.scrollHeight;
-
-    const context = chunks.map((c) => c.text).join("\n\n");
-    const sys =
-      "You are a RAG assistant embedded in Paweł Włodarczyk's personal portfolio. Answer questions about Paweł using ONLY the provided context. Speak in third person about Paweł. Be concise — 2–3 sentences max. Direct, technical, no fluff. If the context does not contain enough information, say so briefly.\n\nContext:\n" +
-      context;
-
+    let res: Response;
     try {
-      const claudeApi = (window as unknown as ClaudeGlobal).claude;
-      if (claudeApi?.complete) {
-        const result = await claudeApi.complete({
-          messages: [{ role: "user", content: query }],
-          system: sys,
-        });
-        await streamInto(respEl, result);
-      } else {
-        const synthesized = synthesizeAnswer(query, chunks);
-        await streamInto(respEl, synthesized);
-      }
+      res = await fetch(`${RAG_API}/api/rag`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
     } catch {
-      respEl.textContent = "// model unavailable";
-      respEl.classList.add("dim");
+      await appendLine("// backend unavailable — is the server running?", "dim");
+      finish();
+      return;
     }
 
-    await appendLine("");
-    setRagStatus("done");
-    ragBusyRef.current = false;
-    setRunDisabled(false);
-    setChipsDisabled(false);
-    ragInputRef.current?.focus();
-    setTimeout(() => {
-      setRagStatus("ready");
-    }, 3000);
+    if (res.status === 429) {
+      await appendLine("// rate limit reached — try again in a minute", "dim");
+      finish();
+      return;
+    }
+
+    if (!res.ok) {
+      await appendLine("// request failed (" + res.status + ")", "dim");
+      finish();
+      return;
+    }
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let respEl: HTMLDivElement | null = null;
+    let shouldStop = false;
+
+    while (!shouldStop) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop()!;
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+
+        if (payload === "[DONE]") {
+          shouldStop = true;
+          break;
+        }
+
+        try {
+          const data = JSON.parse(payload);
+
+          if (data.error) {
+            await appendLine("");
+            await appendLine("// error: " + data.error, "dim");
+            shouldStop = true;
+            break;
+          }
+
+          if (data.chunks) {
+            await appendLine("");
+            await appendLine(
+              "retrieved " + data.chunks.length + " chunks:",
+              "step"
+            );
+            for (const chunk of data.chunks) {
+              await appendLine(trunc(chunk.text, 88), "chunk");
+              await appendLine(
+                "similarity: " + chunk.score.toFixed(4),
+                "score"
+              );
+            }
+            await appendLine("");
+            await appendLine("generating response...", "step");
+
+            const ragOutput = ragOutputRef.current;
+            const cur = ragOutput?.querySelector(".rag-cursor-line");
+            if (cur) cur.remove();
+            respEl = document.createElement("div");
+            respEl.className = "rag-line response";
+            ragOutput?.appendChild(respEl);
+            if (ragOutput) ragOutput.scrollTop = ragOutput.scrollHeight;
+          }
+
+          if (data.token != null) {
+            if (!respEl) {
+              const ragOutput = ragOutputRef.current;
+              const cur = ragOutput?.querySelector(".rag-cursor-line");
+              if (cur) cur.remove();
+              respEl = document.createElement("div");
+              respEl.className = "rag-line response";
+              ragOutput?.appendChild(respEl);
+            }
+            respEl.textContent += data.token;
+            const ragOutput = ragOutputRef.current;
+            if (ragOutput) ragOutput.scrollTop = ragOutput.scrollHeight;
+          }
+        } catch {
+          // ignore malformed SSE data
+        }
+      }
+    }
+
+    finish();
   };
 
   // ── Auto-demo ──────────────────────────────────────────────────
   useEffect(() => {
-    const handle = setTimeout(() => {
-      if (!userTouchedRef.current) {
-        runQuery("what is your current role and stack?").then(() => {
-          appendLine("");
-          appendLine(
-            "// click a chip or type your own question below",
-            "dim"
-          );
-        });
+    const handle = setTimeout(async () => {
+      if (userTouchedRef.current) return;
+      try {
+        const h = await fetch(`${RAG_API}/health`);
+        if (!h.ok) return;
+      } catch {
+        return;
       }
+      await runQuery("what is your current role and stack?");
+      appendLine("");
+      appendLine("// click a chip or type your own question below", "dim");
     }, 2500);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
