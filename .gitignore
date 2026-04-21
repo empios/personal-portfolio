@@ -41,3 +41,5 @@ next-env.d.ts
 
 # design bundle (dev-only reference)
 /.design/
+
+.idea

@@ -83,11 +83,16 @@ export default function Portfolio() {
 
   // Refs for typewriter
   const codeBlockRef = useRef<HTMLDivElement>(null);
+  const termWindowRef = useRef<HTMLDivElement>(null);
   // Refs for RAG
+  const ragDemoRef = useRef<HTMLDivElement>(null);
   const ragOutputRef = useRef<HTMLDivElement>(null);
   const ragInputRef = useRef<HTMLInputElement>(null);
   const ragBusyRef = useRef(false);
   const userTouchedRef = useRef(false);
+  // Drag state — one per draggable terminal
+  const dragTermWindow = useRef({ startX: 0, startY: 0, offsetX: 0, offsetY: 0, natX: 0, natY: 0, w: 0, h: 0 });
+  const dragRagDemo = useRef({ startX: 0, startY: 0, offsetX: 0, offsetY: 0, natX: 0, natY: 0, w: 0, h: 0 });
   const [ragStatus, setRagStatus] = useState<"ready" | "running" | "done">(
     "ready"
   );
@@ -229,6 +234,59 @@ export default function Portfolio() {
 
     return () => observer.disconnect();
   }, []);
+
+  // ── Drag via pointer capture ────────────────────────────────────
+  const makeDragHandlers = (
+    ds: typeof dragTermWindow.current,
+    elRef: React.RefObject<HTMLDivElement | null>,
+  ) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      if ((e.target as HTMLElement).closest(".rag-status")) return;
+      e.preventDefault();
+      const handle = e.currentTarget as HTMLElement;
+      handle.setPointerCapture(e.pointerId);
+      ds.startX = e.clientX;
+      ds.startY = e.clientY;
+      const el = elRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        ds.natX = rect.left - ds.offsetX;
+        ds.natY = rect.top - ds.offsetY;
+        ds.w = rect.width;
+        ds.h = rect.height;
+        el.classList.add("dragging");
+      }
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      const handle = e.currentTarget as HTMLElement;
+      if (!handle.hasPointerCapture(e.pointerId)) return;
+      const el = elRef.current;
+      if (!el) return;
+      const pad = 60;
+      let x = ds.offsetX + e.clientX - ds.startX;
+      let y = ds.offsetY + e.clientY - ds.startY;
+      x = Math.max(-(ds.natX + ds.w - pad), Math.min(x, window.innerWidth - ds.natX - pad));
+      y = Math.max(-(ds.natY + ds.h - pad), Math.min(y, window.innerHeight - ds.natY - pad));
+      el.style.transform = `translate(${x}px, ${y}px)`;
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      const handle = e.currentTarget as HTMLElement;
+      if (!handle.hasPointerCapture(e.pointerId)) return;
+      handle.releasePointerCapture(e.pointerId);
+      const el = elRef.current;
+      if (el) {
+        const m = el.style.transform.match(/translate\((.+?)px,\s*(.+?)px\)/);
+        if (m) {
+          ds.offsetX = parseFloat(m[1]);
+          ds.offsetY = parseFloat(m[2]);
+        }
+      }
+      el?.classList.remove("dragging");
+    },
+  });
+
+  const termDrag = makeDragHandlers(dragTermWindow.current, termWindowRef);
+  const ragDrag = makeDragHandlers(dragRagDemo.current, ragDemoRef);
 
   // ── Scramble hover ─────────────────────────────────────────────
   const scramble = (el: HTMLAnchorElement) => {
@@ -430,78 +488,94 @@ export default function Portfolio() {
 
       <div id="hero">
         <div id="hero-left">
-          <div
-            className="code-block fade-in visible"
-            id="code-block"
-            ref={codeBlockRef}
-          >
-            {HERO_LINES.map((line, i) => (
-              <div className={line.className} key={i}>
-                {line.segments.map((seg, j) => (
-                  <span className={seg.className} key={j}>
-                    {seg.text}
-                  </span>
-                ))}
-                {i === HERO_LINES.length - 1 && (
-                  <span className="cursor"></span>
-                )}
+          <div className="term-window fade-in visible" id="code-block" ref={termWindowRef}>
+            <div
+              className="term-titlebar"
+              {...termDrag}
+            >
+              <div className="term-dots">
+                <span className="term-dot red"></span>
+                <span className="term-dot yellow"></span>
+                <span className="term-dot green"></span>
               </div>
-            ))}
+              <span className="term-titlebar-text">~/about.sh</span>
+              <span className="term-titlebar-spacer"></span>
+            </div>
+            <div className="code-block" ref={codeBlockRef}>
+              {HERO_LINES.map((line, i) => (
+                <div className={line.className} key={i}>
+                  {line.segments.map((seg, j) => (
+                    <span className={seg.className} key={j}>
+                      {seg.text}
+                    </span>
+                  ))}
+                  {i === HERO_LINES.length - 1 && (
+                    <span className="cursor"></span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <nav
+              className={"link-row" + (linksVisible ? " visible" : "")}
+              id="links"
+            >
+              <a
+                href="https://github.com/empios"
+                target="_blank"
+                rel="noopener"
+                data-original="github"
+                onMouseEnter={(e) => scramble(e.currentTarget)}
+              >
+                github<span className="arrow">↗</span>
+              </a>
+              <a
+                href="https://www.linkedin.com/in/pawelvlodarczyk"
+                target="_blank"
+                rel="noopener"
+                data-original="linkedin"
+                onMouseEnter={(e) => scramble(e.currentTarget)}
+              >
+                linkedin<span className="arrow">↗</span>
+              </a>
+              <a
+                href={`mailto:${EMAIL}`}
+                data-original="email"
+                onMouseEnter={(e) => scramble(e.currentTarget)}
+              >
+                email<span className="arrow">↗</span>
+              </a>
+              <a
+                href={`${BASE_PATH}/cv.pdf`}
+                target="_blank"
+                rel="noopener"
+                data-original="cv"
+                onMouseEnter={(e) => scramble(e.currentTarget)}
+              >
+                cv<span className="arrow">↗</span>
+              </a>
+            </nav>
           </div>
-
-          <nav
-            className={"link-row fade-in" + (linksVisible ? " visible" : "")}
-            id="links"
-            style={{ transitionDelay: "0.15s" }}
-          >
-            <a
-              href="https://github.com/empios"
-              target="_blank"
-              rel="noopener"
-              data-original="github"
-              onMouseEnter={(e) => scramble(e.currentTarget)}
-            >
-              github<span className="arrow">↗</span>
-            </a>
-            <a
-              href="https://www.linkedin.com/in/pawelvlodarczyk"
-              target="_blank"
-              rel="noopener"
-              data-original="linkedin"
-              onMouseEnter={(e) => scramble(e.currentTarget)}
-            >
-              linkedin<span className="arrow">↗</span>
-            </a>
-            <a
-              href={`mailto:${EMAIL}`}
-              data-original="email"
-              onMouseEnter={(e) => scramble(e.currentTarget)}
-            >
-              email<span className="arrow">↗</span>
-            </a>
-            <a
-              href={`${BASE_PATH}/cv.pdf`}
-              target="_blank"
-              rel="noopener"
-              data-original="cv"
-              onMouseEnter={(e) => scramble(e.currentTarget)}
-            >
-              cv<span className="arrow">↗</span>
-            </a>
-          </nav>
         </div>
 
         <div id="hero-right" aria-hidden="false">
-          <div className="rag-demo" id="rag-demo">
-            <div className="rag-header">
-              <span className="rag-title">rag_demo.py</span>
+          <div className="rag-demo" id="rag-demo" ref={ragDemoRef}>
+            <div
+              className="rag-header"
+              {...ragDrag}
+            >
+              <div className="term-dots">
+                <span className="term-dot red"></span>
+                <span className="term-dot yellow"></span>
+                <span className="term-dot green"></span>
+              </div>
+              <span className="rag-title">~/rag_demo.py</span>
               <span className="rag-status" id="rag-status">
                 <span className={`rag-dot ${ragStatus === "running" ? "running" : ragStatus === "done" ? "done" : ""}`}></span>
                 {ragStatus}
               </span>
             </div>
             <div className="rag-sub-header">
-              // simulated · keyword retrieval · claude generation
+              $ python rag_demo.py --mode interactive
             </div>
             <div
               className="rag-output"
