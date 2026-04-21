@@ -49,6 +49,7 @@ jobs:
       - name: Build
         env:
           BASE_PATH: ${{ steps.base-path.outputs.value }}
+          VITE_RAG_API: ${{ vars.VITE_RAG_API }}
         run: npm run build
 
       - name: Upload artifact

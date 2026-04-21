@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 const EMAIL = "pawelwlodarczyk97@yahoo.com";
-const RAG_API = "http://localhost:3001";
+const RAG_API = import.meta.env.VITE_RAG_API || "http://localhost:3001";
 const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const CHIPS = [
